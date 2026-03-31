@@ -1,14 +1,32 @@
-# Smart UOS E-Service
+# 🎓 Smart UoS E-Service
 
-Junior Project   
-University of Sharjah
+AI-powered system for managing university student requests using intelligent agents.
 
-# Overview
-A smart, AI-driven academic e-service platform designed to improve selected university
-administrative processes such as course capacity requests, grade changes, and program changes.
+---
 
-# Repository Contents
-- Project documentation
-- System design 
-- Sample  datasets
-- UI/UX mockups
+## 📌 Overview
+This project automates student service requests (e.g., raise capacity requests, incomplete exam requets, course equivalency requests) using an agent-based approach to improve speed, accuracy, and efficiency.
+
+---
+
+## ⚙️ Features
+- Agent-based request handling  
+- Duplicate & spam detection  
+- Automated decision workflow  
+- Reduced manual processing  
+
+---
+
+## 🧰 Technologies
+- Python (AI agents)  
+- SQL (database design and queries)  
+- Figma (UI/UX design)  
+- GitHub (version control)  
+
+---
+
+## 👥 Contributors
+- Hour Omar
+- Mariam Ahmad
+- Qamariya Albadi
+- Shaikha Alfalasi
