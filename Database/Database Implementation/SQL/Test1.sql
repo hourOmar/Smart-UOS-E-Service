@@ -1,0 +1,2 @@
+USE Smart_UoS;
+SHOW TABLES;
