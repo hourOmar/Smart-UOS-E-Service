@@ -1,0 +1,18 @@
+# Backend (FastAPI + AI agents) Python dependencies.
+# Install into a virtualenv:
+#   python -m venv .venv
+#   .venv\Scripts\activate        (Windows)  |  source .venv/bin/activate  (POSIX)
+#   pip install -r requirements.txt
+
+# Current official Google GenAI SDK  ->  from google import genai
+# (NOT the deprecated google-generativeai package)
+google-genai==2.22.0
+
+# Loads backend/.env into the environment for local development.
+python-dotenv==1.2.3
+
+# PostgreSQL access for the Supabase database (server-side).
+# SQLAlchemy Engine + psycopg 3 driver: postgresql+psycopg://...
+# Standard FastAPI DB layer; gives future AI-agent SQL tools an Engine.
+SQLAlchemy==2.0.52
+psycopg[binary]==3.3.5
