@@ -1,0 +1,6 @@
+{
+  "name": "UoS Portal",
+  "description": "University of Sharjah academic requests and administrative portal system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
