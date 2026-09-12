@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserRole } from '../../../types';
 import { AlertCircle, Lock, Mail, CheckCircle2, ShieldCheck, GraduationCap } from 'lucide-react';
+import { signIn } from '../../../services/supabase/auth';
 
 /**
  * TEMPORARY AUTHENTICATION
@@ -30,7 +31,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onLoginSuccess })
   const [forgotEmail, setForgotEmail] = useState<string>('');
   const [forgotSent, setForgotSent] = useState<boolean>(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -50,12 +51,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onLoginSuccess })
     const localPart = trimmedEmail.split('@')[0];
     const studentRegex = /^U\d+$/i;
 
-    const detectedRole: UserRole = studentRegex.test(localPart) ? 'student' : 'admin';
+    try {
+      await signIn(trimmedEmail, trimmedPassword);
+      const detectedRole: UserRole = studentRegex.test(localPart) ? 'student' : 'admin';
 
-    if (onLogin) {
-      onLogin(detectedRole, trimmedEmail);
-    } else if (onLoginSuccess) {
-      onLoginSuccess(detectedRole, trimmedEmail);
+      if (onLogin) {
+        onLogin(detectedRole, trimmedEmail);
+      } else if (onLoginSuccess) {
+        onLoginSuccess(detectedRole, trimmedEmail);
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in.');
     }
   };
 

@@ -7,19 +7,19 @@ import { createClient } from '@supabase/supabase-js';
  * variables (see .env.example / .env.local):
  *
  *   VITE_SUPABASE_URL
- *   VITE_SUPABASE_ANON_KEY
+ *   VITE_SUPABASE_PUBLISHABLE_KEY
  *
  * Both must be present. If either is missing we throw immediately
  * rather than letting an unconfigured client fail later with a
  * confusing runtime error.
  */
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!supabaseUrl || !supabasePublishableKey) {
   const missing = [
     !supabaseUrl && 'VITE_SUPABASE_URL',
-    !supabaseAnonKey && 'VITE_SUPABASE_ANON_KEY',
+    !supabasePublishableKey && 'VITE_SUPABASE_PUBLISHABLE_KEY',
   ]
     .filter(Boolean)
     .join(', ');
@@ -30,6 +30,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+if (supabasePublishableKey.includes('service_role')) {
+  throw new Error(
+    'VITE_SUPABASE_ANON_KEY contains a service_role key. Use the publishable anon key in the frontend and rotate the exposed service_role key.',
+  );
+}
+
 /**
  * Reusable Supabase client for the app.
  *
@@ -37,4 +43,4 @@ if (!supabaseUrl || !supabaseAnonKey) {
  *
  *   import { supabase } from '@/services/supabase/client';
  */
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabasePublishableKey);

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText,
@@ -11,8 +11,10 @@ import {
   Eye,
 } from 'lucide-react';
 import { defaultStudentProfile } from '../../../mocks/students.mock';
-import { studentDashboardStats } from '../../../mocks/dashboard.mock';
-import { sampleStudentRequests } from '../../../mocks/requests.mock';
+import { AcademicRequest } from '../../../types';
+import { supabase } from '../../../services/supabase/client';
+import { listStudentRequests } from '../../../services/supabase/requests';
+import { getStudentByEmail } from '../../../services/supabase/students';
 import { StatCard } from '../../../components/common/StatCard';
 import { StatusBadge } from '../../../components/common/StatusBadge';
 
@@ -40,6 +42,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   searchQuery,
 }) => {
   const navigate = useNavigate();
+  const [liveRequests, setLiveRequests] = useState<AcademicRequest[] | null>(null);
+  const [studentName, setStudentName] = useState(defaultStudentProfile.name);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Static frontend configuration (title/icon/route target). Unlike the
   // admin dashboard, these cards do not display pending/total counts.
   //
@@ -93,7 +98,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     },
   ];
 
-  const filteredRequests = sampleStudentRequests.filter((req) => {
+  useEffect(() => {
+    let mounted = true;
+
+    const loadStudentData = async () => {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (!email) {
+        setLoadError('No Supabase session was found. Please sign in again.');
+        return;
+      }
+
+      try {
+        const student = await getStudentByEmail(email);
+        const studentId = student?.Student_id ?? email.split('@')[0];
+        const requests = await listStudentRequests(studentId);
+
+        if (!mounted) return;
+        setLiveRequests(requests);
+        if (student?.Student_Name) setStudentName(student.Student_Name);
+      } catch (error) {
+        console.error('Unable to load student dashboard data:', error);
+        if (mounted) {
+          const supabaseError = error as {
+            message?: string;
+            code?: string;
+            details?: string;
+            hint?: string;
+          };
+          const details = [supabaseError.code, supabaseError.message, supabaseError.details, supabaseError.hint]
+            .filter(Boolean)
+            .join(' - ');
+          setLoadError(details || 'Unable to load requests from Supabase.');
+        }
+      }
+    };
+
+    void loadStudentData();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const requests = liveRequests ?? [];
+  const dashboardStats = {
+    totalRequests: String(requests.length),
+    pending: String(requests.filter((request) => request.status === 'In Progress' || request.status === 'Pending Review').length),
+    approved: String(requests.filter((request) => request.status === 'Approved').length),
+    rejected: String(requests.filter((request) => request.status === 'Rejected').length),
+  };
+
+  const filteredRequests = requests.filter((req) => {
     if (!searchQuery) return true;
     return (
       req.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -105,6 +161,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   return (
     <div id="student-dashboard-page" className="p-6 max-w-7xl mx-auto flex flex-col gap-6">
+      {loadError && (
+        <div className="rounded-xl border border-[#F59E0B]/40 bg-[#FFFBEB] px-4 py-3 text-xs font-semibold text-[#92400E]">
+          Supabase data could not be loaded: {loadError}
+        </div>
+      )}
       {/* Welcome Banner matching login card header gradient */}
       <section
         id="student-welcome-banner"
@@ -118,10 +179,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </span>
           </div>
           <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-            Welcome back, {defaultStudentProfile.name}! 👋
+            Welcome back, {studentName}! 👋
           </h2>
           <p className="text-xs sm:text-sm text-white/90 font-medium mt-1">
-            You have <strong className="font-bold underline decoration-white/50">{studentDashboardStats.pending}</strong> pending requests that need attention.
+            You have <strong className="font-bold underline decoration-white/50">{dashboardStats.pending}</strong> pending requests that need attention.
           </p>
         </div>
 
@@ -141,7 +202,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           id="stat-card-student-total"
           icon="📝"
           iconColorClass="bg-[#F3F4F6] text-[#4B5563]"
-          value={studentDashboardStats.totalRequests}
+          value={dashboardStats.totalRequests}
           valueColorClass="text-[#1F2937]"
           label="Total Requests"
         />
@@ -149,7 +210,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           id="stat-card-student-pending"
           icon="⏳"
           iconColorClass="bg-[#FEF3C7] text-[#D97706]"
-          value={studentDashboardStats.pending}
+          value={dashboardStats.pending}
           valueColorClass="text-[#D97706]"
           label="Pending"
         />
@@ -157,7 +218,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           id="stat-card-student-approved"
           icon="✅"
           iconColorClass="bg-[#D1FAE5] text-[#059669]"
-          value={studentDashboardStats.approved}
+          value={dashboardStats.approved}
           valueColorClass="text-[#059669]"
           label="Approved"
         />
@@ -165,7 +226,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           id="stat-card-student-rejected"
           icon="❌"
           iconColorClass="bg-[#FEE2E2] text-[#EF4444]"
-          value={studentDashboardStats.rejected}
+          value={dashboardStats.rejected}
           valueColorClass="text-[#EF4444]"
           label="Rejected"
         />

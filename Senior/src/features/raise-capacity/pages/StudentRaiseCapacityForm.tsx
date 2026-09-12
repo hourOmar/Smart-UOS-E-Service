@@ -9,6 +9,9 @@ import { CourseCapacityItem } from '../types/raiseCapacity.types';
 import { coursesList } from '../mocks/courses.mock';
 import { BackLink } from '../../../components/common/BackLink';
 import { FileUploadDropzone } from '../../../components/common/FileUploadDropzone';
+import { supabase } from '../../../services/supabase/client';
+import { createRaiseCapacityRequest } from '../../../services/supabase/requests';
+import { getStudentByEmail } from '../../../services/supabase/students';
 
 interface StudentRaiseCapacityFormProps {
   onToast: (msg: string) => void;
@@ -43,25 +46,63 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
     return c.department === selectedDept;
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!justification.trim()) {
       setErrorMsg('Please provide a justification for your request.');
       return;
     }
 
-    const payload: SubmittedRequestData = {
-      requestId: '#RC-2026-092',
-      requestType: 'Raise Capacity',
-      course: `${selectedCourse.code} - ${selectedCourse.name} (${selectedCourse.section})`,
-      submittedDate: 'Mar 16, 2026',
-      estimatedProcessing: '1-2 business days',
-      status: 'Pending Review',
-      details: justification,
-    };
+    setErrorMsg('');
 
-    onToast('Petition submitted successfully to academic committee.');
-    navigate('/student/requests/success', { state: payload });
+    try {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (!email) throw new Error('Your session has expired. Please sign in again.');
+
+      const student = await getStudentByEmail(email);
+      const studentId = student?.Student_id ?? email.split('@')[0];
+      const submittedDate = new Date().toISOString().slice(0, 10);
+      const requestId = Date.now() % 2147483647;
+      const sectionId = Number.parseInt(selectedCourse.section.replace(/\D/g, ''), 10);
+
+      if (Number.isNaN(sectionId)) {
+        throw new Error(`The selected section "${selectedCourse.section}" has no numeric section ID.`);
+      }
+
+      await createRaiseCapacityRequest({
+        requestId,
+        studentId,
+        courseId: Number.parseInt(selectedCourse.code, 10),
+        sectionId,
+        reason: justification,
+        submittedDate,
+      });
+
+      const payload: SubmittedRequestData = {
+        requestId: String(requestId),
+        requestType: 'Raise Capacity',
+        course: `${selectedCourse.code} - ${selectedCourse.name} (${selectedCourse.section})`,
+        submittedDate,
+        estimatedProcessing: '1-2 business days',
+        status: 'Pending Review',
+        details: justification,
+      };
+
+      onToast('Petition submitted successfully to academic committee.');
+      navigate('/student/requests/success', { state: payload });
+    } catch (error) {
+      const supabaseError = error as {
+        message?: string;
+        code?: string;
+        details?: string;
+        hint?: string;
+      };
+      const details = [supabaseError.code, supabaseError.message, supabaseError.details, supabaseError.hint]
+        .filter(Boolean)
+        .join(' - ');
+      setErrorMsg(details || 'Unable to submit the request.');
+    }
   };
 
   return (
