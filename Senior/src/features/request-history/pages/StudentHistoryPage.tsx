@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { AcademicRequest } from '../../../types';
 import { sampleStudentHistory } from '../../../mocks/requests.mock';
 import { FilterTab } from '../../../components/common/FilterTab';
 import { ModalShell } from '../../../components/common/ModalShell';
 import { HistoryStatusBadge } from '../components/HistoryStatusBadge';
+import { supabase } from '../../../services/supabase/client';
+import { getStudentByEmail } from '../../../services/supabase/students';
+import { listStudentRequests } from '../../../services/supabase/requests';
 
 interface StudentHistoryPageProps {
   searchQuery: string;
@@ -17,6 +20,33 @@ export const StudentHistoryPage: React.FC<StudentHistoryPageProps> = ({
   const [localSearch, setLocalSearch] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [selectedCard, setSelectedCard] = useState<AcademicRequest | null>(null);
+  // Falls back to the placeholder mock data if Supabase isn't reachable,
+  // so the page still renders something during development.
+  const [historyData, setHistoryData] = useState<AcademicRequest[]>(sampleStudentHistory);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (!email) return;
+
+      try {
+        const student = await getStudentByEmail(email);
+        const studentId = student?.Student_ID ?? email.split('@')[0];
+        const requests = await listStudentRequests(studentId);
+        if (!cancelled) setHistoryData(requests);
+      } catch (err) {
+        console.error('Failed to load request history from Supabase:', err);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filters = [
     'All',
@@ -39,7 +69,7 @@ export const StudentHistoryPage: React.FC<StudentHistoryPageProps> = ({
 
   const effectiveSearch = localSearch || searchQuery;
 
-  const filteredHistory = sampleStudentHistory.filter((item) => {
+  const filteredHistory = historyData.filter((item) => {
     const matchesFilter =
       selectedFilter === 'All' ||
       selectedFilter === 'Clear Filters' ||

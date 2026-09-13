@@ -1,7 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, Bell, X, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import { UserRole } from '../../types';
-import { studentNotifications, adminNotifications } from '../../mocks/notifications.mock';
+import { supabase } from '../../services/supabase/client';
+import {
+  listNotificationsForUser,
+  markAllNotificationsRead,
+  NotificationRow,
+} from '../../services/supabase/notifications';
 
 interface HeaderProps {
   role: UserRole;
@@ -23,6 +28,24 @@ interface HeaderProps {
   onSearchChange: (value: string) => void;
 }
 
+function relativeTime(dateString: string): string {
+  const then = new Date(dateString.replace(' ', 'T') + 'Z').getTime();
+  const diffMs = Date.now() - then;
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function inferType(message: string): 'success' | 'warning' | 'info' {
+  const lower = message.toLowerCase();
+  if (lower.includes('approved') || lower.includes('completed')) return 'success';
+  if (lower.includes('rejected') || lower.includes('denied') || lower.includes('alert')) return 'warning';
+  return 'info';
+}
+
 export const Header: React.FC<HeaderProps> = ({
   role,
   title,
@@ -32,9 +55,50 @@ export const Header: React.FC<HeaderProps> = ({
   onSearchChange,
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
-  const isStudent = role === 'student';
-  const badgeCount = isStudent ? studentNotifications.unreadCount : adminNotifications.unreadCount;
-  const notifications = isStudent ? studentNotifications.items : adminNotifications.items;
+  const [notificationRows, setNotificationRows] = useState<NotificationRow[]>([]);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    supabase.auth.getUser().then(async ({ data }) => {
+      const uid = data.user?.id;
+      if (!uid) return;
+      if (!cancelled) setAuthUserId(uid);
+
+      try {
+        const rows = await listNotificationsForUser(uid);
+        if (!cancelled) setNotificationRows(rows);
+      } catch (err) {
+        console.error('Failed to load notifications:', err);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const notifications = notificationRows.map((row) => ({
+    id: row.Notification_ID,
+    title: row.Request_ID ? `Update: ${row.Request_ID}` : 'Notification',
+    desc: row.Message,
+    time: relativeTime(row.Notification_Date),
+    type: inferType(row.Message),
+    isRead: row.Is_Read,
+  }));
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  const handleMarkAllRead = async () => {
+    setShowNotifications(false);
+    if (!authUserId) return;
+    try {
+      await markAllNotificationsRead(authUserId);
+      setNotificationRows((prev) => prev.map((n) => ({ ...n, Is_Read: true })));
+    } catch (err) {
+      console.error('Failed to mark notifications as read:', err);
+    }
+  };
 
   return (
     <header
@@ -85,7 +149,7 @@ export const Header: React.FC<HeaderProps> = ({
               id="header-notification-badge"
               className="absolute -top-1.5 -right-1.5 bg-[#EF4444] text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full shadow-xs ring-2 ring-white"
             >
-              {badgeCount}
+              {unreadCount}
             </span>
           </button>
 
@@ -99,7 +163,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-xs text-[#1F2937]">Notifications</span>
                   <span className="bg-[#FEE2E2] text-[#EF4444] text-[10px] font-bold px-2 py-0.5 rounded-full">
-                    {badgeCount} New
+                    {unreadCount} New
                   </span>
                 </div>
                 <button
@@ -111,8 +175,16 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
 
               <div className="divide-y divide-[#F3F4F6] max-h-64 overflow-y-auto my-2">
+                {notifications.length === 0 && (
+                  <p className="text-[11px] text-[#9CA3AF] text-center py-4">
+                    No notifications yet.
+                  </p>
+                )}
                 {notifications.map((n) => (
-                  <div key={n.id} className="py-2.5 flex items-start gap-2.5">
+                  <div
+                    key={n.id}
+                    className={`py-2.5 flex items-start gap-2.5 ${n.isRead ? 'opacity-60' : ''}`}
+                  >
                     {n.type === 'success' ? (
                       <CheckCircle2 className="w-4 h-4 text-[#10B981] shrink-0 mt-0.5" />
                     ) : n.type === 'warning' ? (
@@ -131,7 +203,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               <div className="pt-2 border-t border-[#F3F4F6] text-center">
                 <button
-                  onClick={() => setShowNotifications(false)}
+                  onClick={handleMarkAllRead}
                   className="text-xs font-medium text-[#059669] hover:underline"
                 >
                   Mark all as read

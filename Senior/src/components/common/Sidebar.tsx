@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -12,11 +12,23 @@ import {
 import { UserRole } from '../../types';
 import { defaultStudentProfile } from '../../mocks/students.mock';
 import { defaultAdminProfile } from '../../mocks/admins.mock';
+import { supabase } from '../../services/supabase/client';
+import { getStudentByEmail } from '../../services/supabase/students';
+import { getProgramById } from '../../services/supabase/programs';
 
 interface SidebarProps {
   role: UserRole;
   onLogout: () => void;
   onOpenNewRequestModal?: () => void;
+}
+
+function initialsFromName(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('');
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -28,6 +40,50 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { pathname } = useLocation();
   const isStudent = role === 'student';
   const base = isStudent ? '/student' : '/admin';
+
+  // Falls back to the mock placeholder profile if there's no logged-in
+  // Supabase Auth session yet, or if the logged-in email doesn't match
+  // a row in the Student table.
+  const [profile, setProfile] = useState({
+    name: defaultStudentProfile.name,
+    id: defaultStudentProfile.id,
+    department: defaultStudentProfile.department,
+    initials: defaultStudentProfile.initials,
+  });
+
+  useEffect(() => {
+    if (!isStudent) return;
+    let cancelled = false;
+
+    supabase.auth.getUser().then(async ({ data }) => {
+      const email = data.user?.email;
+      if (!email) return;
+
+      try {
+        const student = await getStudentByEmail(email);
+        if (!cancelled && student) {
+          let department = student.Program_ID ? String(student.Program_ID) : '—';
+          if (student.Program_ID) {
+            const program = await getProgramById(student.Program_ID);
+            if (program) department = program.Program_Name;
+          }
+
+          setProfile({
+            name: student.Student_Name,
+            id: student.Student_ID,
+            department,
+            initials: initialsFromName(student.Student_Name),
+          });
+        }
+      } catch (err) {
+        console.error('Sidebar: failed to load student profile:', err);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isStudent]);
   const widthClass = isStudent ? 'w-full md:w-[306px]' : 'w-full md:w-[280px]';
 
   const isDashboardActive = pathname === `${base}/dashboard`;
@@ -84,15 +140,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-full bg-[#059669] text-white flex items-center justify-center font-bold text-sm shadow-sm ring-2 ring-[#D1FAE5]">
-              {isStudent ? defaultStudentProfile.initials : defaultAdminProfile.initials}
+              {isStudent ? profile.initials : defaultAdminProfile.initials}
             </div>
             <div className="overflow-hidden flex-1">
               <h4 className="font-semibold text-xs text-[#1F2937] truncate">
-                {isStudent ? defaultStudentProfile.name : defaultAdminProfile.name}
+                {isStudent ? profile.name : defaultAdminProfile.name}
               </h4>
               <p className="text-[11px] text-[#6B7280] truncate mt-0.5">
                 {isStudent
-                  ? `ID: ${defaultStudentProfile.id} | ${defaultStudentProfile.department}`
+                  ? `ID: ${profile.id} | ${profile.department}`
                   : defaultAdminProfile.role}
               </p>
             </div>

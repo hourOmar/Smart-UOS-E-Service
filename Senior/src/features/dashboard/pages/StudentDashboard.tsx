@@ -111,7 +111,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       try {
         const student = await getStudentByEmail(email);
-        const studentId = student?.Student_id ?? email.split('@')[0];
+        const studentId = student?.Student_ID ?? email.split('@')[0];
         const requests = await listStudentRequests(studentId);
 
         if (!mounted) return;
@@ -188,7 +188,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
         <button
           id="student-banner-new-request-btn"
-          onClick={onOpenNewRequestModal}
+          onClick={
+            onOpenNewRequestModal ??
+            (() =>
+              document
+                .getElementById('student-request-types-section')
+                ?.scrollIntoView({ behavior: 'smooth' }))
+          }
           className="relative z-10 shrink-0 py-2.5 px-5 rounded-xl bg-white hover:bg-[#F9FAFB] active:scale-98 text-[#059669] font-bold text-xs sm:text-sm shadow-md flex items-center gap-2 transition-all"
         >
           <PlusCircle className="w-4 h-4 text-[#059669]" />
@@ -233,7 +239,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       </section>
 
       {/* 5 Request Types Section */}
-      <section>
+      <section id="student-request-types-section">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-bold text-[#1F2937] tracking-tight">

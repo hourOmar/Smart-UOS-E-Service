@@ -61,7 +61,7 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
       if (!email) throw new Error('Your session has expired. Please sign in again.');
 
       const student = await getStudentByEmail(email);
-      const studentId = student?.Student_id ?? email.split('@')[0];
+      const studentId = student?.Student_ID ?? email.split('@')[0];
       const submittedDate = new Date().toISOString().slice(0, 10);
       const requestId = Date.now() % 2147483647;
       const sectionId = Number.parseInt(selectedCourse.section.replace(/\D/g, ''), 10);

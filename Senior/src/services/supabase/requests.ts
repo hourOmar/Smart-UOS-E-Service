@@ -91,9 +91,9 @@ export async function createRaiseCapacityRequest(
     Request_ID: req.requestId,
     Request_Type: 'Raise Capacity',
     Request_Date: req.submittedDate,
-    Priority_Level: 'Medium',
     Submission_Time: new Date().toISOString().slice(11, 19),
     Description: req.reason,
+    Current_Status: 'Pending Review',
     Student_ID: req.studentId,
   });
 

@@ -1,15 +1,104 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { UserRole } from '../../../types';
 import { defaultStudentProfile } from '../../../mocks/students.mock';
 import { defaultAdminProfile } from '../../../mocks/admins.mock';
+import { supabase } from '../../../services/supabase/client';
+import { getStudentByEmail } from '../../../services/supabase/students';
+import { getProgramById } from '../../../services/supabase/programs';
+import { listStudentRequests } from '../../../services/supabase/requests';
+
 interface ProfilePageProps {
   role: UserRole;
   onToast: (msg: string) => void;
 }
 
+function initialsFromName(name: string): string {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('');
+}
+
 export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
   const isStudent = role === 'student';
   const [isEditing, setIsEditing] = useState(false);
+
+  // Only fields that actually exist in the live schema are fetched here
+  // (Student_Name, Student_ID, Student_Email, CGPA, Completed_Hours,
+  // Program → Program_Name/College_Name, request counts). Fields with
+  // no backing column yet (DOB, nationality, phone, advisor, academic
+  // standing, expected graduation, current semester) stay as the
+  // original bracketed placeholders until those columns exist.
+  const [profile, setProfile] = useState({
+    name: defaultStudentProfile.name,
+    id: defaultStudentProfile.id,
+    email: defaultStudentProfile.email,
+    initials: defaultStudentProfile.initials,
+    gpa: defaultStudentProfile.gpa,
+    credits: defaultStudentProfile.credits,
+    program: defaultStudentProfile.program,
+    college: defaultStudentProfile.college,
+  });
+  const [totalRequests, setTotalRequests] = useState<number | null>(null);
+  const [approvedRequests, setApprovedRequests] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isStudent) return;
+    let cancelled = false;
+
+    const load = async () => {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (!email) return;
+
+      try {
+        const student = await getStudentByEmail(email);
+        if (!student) return;
+
+        let programName = defaultStudentProfile.program;
+        let collegeName = defaultStudentProfile.college;
+        if (student.Program_ID) {
+          const program = await getProgramById(student.Program_ID);
+          if (program) {
+            programName = program.Program_Name;
+            collegeName = program.College_Name;
+          }
+        }
+
+        if (cancelled) return;
+        setProfile({
+          name: student.Student_Name,
+          id: student.Student_ID,
+          email: student.Student_Email,
+          initials: initialsFromName(student.Student_Name),
+          gpa: student.CGPA != null ? String(student.CGPA) : defaultStudentProfile.gpa,
+          credits:
+            student.Completed_Hours != null
+              ? String(student.Completed_Hours)
+              : defaultStudentProfile.credits,
+          program: programName,
+          college: collegeName,
+        });
+
+        const requests = await listStudentRequests(student.Student_ID);
+        if (!cancelled) {
+          setTotalRequests(requests.length);
+          setApprovedRequests(
+            requests.filter((r) => r.status === 'Approved').length
+          );
+        }
+      } catch (err) {
+        console.error('Failed to load profile from Supabase:', err);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isStudent]);
 
   return (
     <div id="profile-page" className="p-6 max-w-6xl mx-auto flex flex-col gap-6">
@@ -25,16 +114,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
               id="profile-avatar-circle"
               className="w-24 h-24 rounded-full bg-[#059669] border-4 border-white text-white flex items-center justify-center text-2xl font-black shadow-md"
             >
-              {isStudent ? defaultStudentProfile.initials : defaultAdminProfile.initials}
+              {isStudent ? profile.initials : defaultAdminProfile.initials}
             </div>
 
             <div className="mb-1">
               <h1 className="text-xl sm:text-2xl font-extrabold text-[#1F2937]">
-                {isStudent ? defaultStudentProfile.name : defaultAdminProfile.name}
+                {isStudent ? profile.name : defaultAdminProfile.name}
               </h1>
               <p className="text-xs font-semibold text-[#6B7280] mt-0.5">
                 {isStudent
-                  ? `Student ID: ${defaultStudentProfile.id}`
+                  ? `Student ID: ${profile.id}`
                   : defaultAdminProfile.role}
               </p>
               <p className="text-xs text-[#6B7280] mt-0.5">
@@ -44,7 +133,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
               </p>
               <p className="text-xs text-[#9CA3AF] mt-0.5">
                 {isStudent
-                  ? `${defaultStudentProfile.email} | ${defaultStudentProfile.phone}`
+                  ? `${profile.email} | ${defaultStudentProfile.phone}`
                   : `${defaultAdminProfile.email} | ${defaultAdminProfile.phone}`}
               </p>
             </div>
@@ -77,25 +166,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                {defaultStudentProfile.gpa}
+                {profile.gpa}
               </span>
               <p className="text-xs text-[#6B7280] font-medium mt-1">Cumulative GPA</p>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                {defaultStudentProfile.credits}
+                {profile.credits}
               </span>
               <p className="text-xs text-[#6B7280] font-medium mt-1">Credits Completed</p>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                [12]
+                {totalRequests ?? '—'}
               </span>
               <p className="text-xs text-[#6B7280] font-medium mt-1">Total Requests</p>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                [6]
+                {approvedRequests ?? '—'}
               </span>
               <p className="text-xs text-[#6B7280] font-medium mt-1">Approved Petitions</p>
             </div>
@@ -110,7 +199,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
               <div className="flex flex-col gap-3">
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Full Name</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.name}</span>
+                  <span className="font-semibold text-[#1F2937]">{profile.name}</span>
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Nationality</span>
@@ -118,7 +207,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Email Address</span>
-                  <span className="font-semibold text-[#1F2937] font-mono">{defaultStudentProfile.email}</span>
+                  <span className="font-semibold text-[#1F2937] font-mono">{profile.email}</span>
                 </div>
               </div>
 
@@ -148,7 +237,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
               <div className="flex flex-col gap-3">
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Degree Program</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.program}</span>
+                  <span className="font-semibold text-[#1F2937]">{profile.program}</span>
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Academic Standing</span>
@@ -165,7 +254,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
               <div className="flex flex-col gap-3">
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Faculty & College</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.college}</span>
+                  <span className="font-semibold text-[#1F2937]">{profile.college}</span>
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Academic Advisor</span>

@@ -2,7 +2,7 @@ import { supabase } from './client';
 
 export interface Student {
   id: string;
-  Student_id: string;
+  Student_ID: string;
   created_at: string;
   Student_Name: string;
   Student_Email: string;
@@ -19,7 +19,7 @@ export async function listStudents(): Promise<Student[]> {
   const { data, error } = await supabase
     .from('Student')
     .select('*')
-    .order('Student_id', { ascending: true });
+    .order('Student_ID', { ascending: true });
 
   if (error) {
     console.error('Error loading students:', error);
@@ -58,7 +58,7 @@ export async function getStudentById(
   const { data, error } = await supabase
     .from('Student')
     .select('*')
-    .eq('Student_id', studentId.trim())
+    .eq('Student_ID', studentId.trim())
     .maybeSingle();
 
   if (error) {
