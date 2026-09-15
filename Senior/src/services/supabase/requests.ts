@@ -26,7 +26,7 @@ function rowToRequest(row: RequestViewRow): AcademicRequest {
     priority: 'Medium' as PriorityLevel,
     submittedDate: row.Request_Date,
     processedDate: undefined,
-    status: (row.Current_Status ?? 'Pending Review') as RequestStatus,
+    status: (row.Current_Status ?? 'In Progress') as RequestStatus,
     notes: row.Description ?? undefined,
     reason: row.Description ?? undefined,
   };
@@ -93,7 +93,7 @@ export async function createRaiseCapacityRequest(
     Request_Date: req.submittedDate,
     Submission_Time: new Date().toISOString().slice(11, 19),
     Description: req.reason,
-    Current_Status: 'Pending Review',
+    Current_Status: 'In Progress',
     Student_ID: req.studentId,
   });
 

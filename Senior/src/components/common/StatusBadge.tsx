@@ -13,7 +13,7 @@ interface StatusBadgeProps {
  * extraction, aside from the fallback label text).
  */
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, fallbackLabel }) => {
-  if (status === 'Approved') {
+  if (status === 'Completed') {
     return (
       <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#D1FAE5] text-[#059669] inline-flex items-center gap-1">
         <CheckCircle2 className="w-3 h-3" />

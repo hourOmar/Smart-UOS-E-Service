@@ -145,7 +145,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const dashboardStats = {
     totalRequests: String(requests.length),
     pending: String(requests.filter((request) => request.status === 'In Progress' || request.status === 'Pending Review').length),
-    approved: String(requests.filter((request) => request.status === 'Approved').length),
+    approved: String(requests.filter((request) => request.status === 'Completed').length),
     rejected: String(requests.filter((request) => request.status === 'Rejected').length),
   };
 

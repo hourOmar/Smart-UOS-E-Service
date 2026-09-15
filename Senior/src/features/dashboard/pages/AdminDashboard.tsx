@@ -126,7 +126,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
-      case 'Approved':
+      case 'Completed':
         return 'bg-[#D1FAE5] text-[#059669]';
       case 'Rejected':
         return 'bg-[#FEE2E2] text-[#EF4444]';
