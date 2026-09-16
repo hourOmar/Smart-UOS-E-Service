@@ -115,3 +115,18 @@ export async function createRaiseCapacityRequest(
     throw subtypeError;
   }
 }
+
+export async function listRaiseCapacityRequests() {
+  const { data, error } = await supabase
+    .from('Request')
+    .select('*')
+    .eq('Request_Type', 'Raise Capacity')
+    .order('Request_Date', { ascending: false });
+
+  if (error) {
+    console.error('Error loading raise capacity requests:', error);
+    throw error;
+  }
+
+  return data ?? [];
+}

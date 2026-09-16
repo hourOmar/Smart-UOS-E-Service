@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Clock,
   BookOpen,
@@ -13,6 +13,7 @@ import { sampleAdminRequests } from '../../../mocks/requests.mock';
 import { fromRequestSlug } from '../../../app/routeHelpers';
 import { BackLink } from '../../../components/common/BackLink';
 import { ApproveRejectCards } from '../../../components/common/ApproveRejectCards';
+import { supabase } from '../../../services/supabase/client';
 
 interface AdminRaiseCapacityReviewPageProps {
   onToast: (msg: string) => void;
@@ -48,25 +49,69 @@ export const AdminRaiseCapacityReviewPage: React.FC<AdminRaiseCapacityReviewPage
   const [totalSeats, setTotalSeats] = useState<number>(35);
   const [effectiveSemester, setEffectiveSemester] = useState<string>('Spring 2026');
 
-  const matchedRequest = requestIdParam
-    ? sampleAdminRequests.find(
-        (r) => r.type === 'Raise Capacity' && r.id === fromRequestSlug(requestIdParam)
-      )
-    : undefined;
+  const [matchedRequest, setMatchedRequest] = useState<any>(null);
 
-  const studentName = matchedRequest?.studentName || defaultStudentProfile.name;
-  const studentId = matchedRequest?.studentId || defaultStudentProfile.id;
-  const requestId = matchedRequest?.id || '#RC-2026-088';
+  useEffect(() => {
+    console.log('useEffect ran. requestIdParam =', requestIdParam);
 
-  const handleDecisionSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onToast(
-      decision === 'approve'
-        ? `Request ${requestId} Approved! Capacity increased to ${totalSeats} seats.`
-        : `Request ${requestId} Rejected. Student notified.`
-    );
-    navigate('/admin/requests/raise-capacity');
-  };
+    if (!requestIdParam) {
+      console.log('No requestIdParam — setting null');
+      setMatchedRequest(null);
+      return;
+    }
+
+    const realId = fromRequestSlug(requestIdParam);
+    console.log('Looking up Request_ID:', realId);
+
+    supabase
+      .from('Request')
+      .select('*')
+      .eq('Request_ID', realId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        console.log('Query result — data:', data, 'error:', error);
+
+        if (error) {
+        console.error('Failed to load request:', error);
+        setMatchedRequest(null);
+        return;
+      }
+      setMatchedRequest(data);
+    });
+}, [requestIdParam]);
+
+  const studentName = defaultStudentProfile.name;              
+  const studentId = matchedRequest?.Student_ID || defaultStudentProfile.id;
+  const requestId = matchedRequest?.Request_ID || '#RC-2026-088';
+
+  const handleDecisionSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+
+  if (!matchedRequest) {
+    onToast('Cannot submit — this request could not be found.');
+    return;
+  }
+
+  const newStatus = decision === 'approve' ? 'Completed' : 'Rejected';
+
+  const { error } = await supabase
+    .from('Request')
+    .update({ Current_Status: newStatus })
+    .eq('Request_ID', matchedRequest.Request_ID);
+
+  if (error) {
+    console.error('Failed to update request status:', error);
+    onToast(`Error: ${error.message}`);
+    return;
+  }
+
+  onToast(
+    decision === 'approve'
+      ? `Request ${requestId} Completed! Capacity increased to ${totalSeats} seats.`
+      : `Request ${requestId} Rejected. Student notified.`
+  );
+  navigate('/admin/requests/raise-capacity');
+};
 
   return (
     <div id="admin-raise-capacity-review-page" className="p-6 max-w-7xl mx-auto flex flex-col gap-6">
