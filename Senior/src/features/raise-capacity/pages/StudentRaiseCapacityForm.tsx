@@ -1,16 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Check,
   AlertCircle,
 } from 'lucide-react';
 import { SubmittedRequestData } from '../../../types';
-import { CourseCapacityItem } from '../types/raiseCapacity.types';
-import { coursesList } from '../mocks/courses.mock';
 import { BackLink } from '../../../components/common/BackLink';
 import { FileUploadDropzone } from '../../../components/common/FileUploadDropzone';
 import { supabase } from '../../../services/supabase/client';
-import { createRaiseCapacityRequest } from '../../../services/supabase/requests';
+import { createRaiseCapacityRequest, listCourseSections } from '../../../services/supabase/requests';
 import { getStudentByEmail } from '../../../services/supabase/students';
 
 interface StudentRaiseCapacityFormProps {
@@ -21,30 +19,31 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
   onToast,
 }) => {
   const navigate = useNavigate();
-  const [selectedDept, setSelectedDept] = useState<string>('All Departments');
-  const [selectedCourse, setSelectedCourse] = useState<CourseCapacityItem>(coursesList[0]);
+
+  const [courses, setCourses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCourse, setSelectedCourse] = useState<any>(null);
+
   const [justification, setJustification] = useState<string>(
     'I need this course to meet graduation prerequisites for next semester and there are no alternative open sections compatible with my degree plan.'
   );
   const [priority, setPriority] = useState<string>('High');
-  // Setter intentionally unused: the dropzone below is a static
-  // placeholder with no file-picker wired up (see FileUploadDropzone.tsx).
   const [uploadedFile] = useState<string>('Graduation_Plan_Audit.pdf');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
-  const departments = [
-    'All Departments',
-    'Computer Science',
-    'Engineering',
-    'Mathematics',
-    'Sciences',
-    'Business',
-  ];
-
-  const filteredCourses = coursesList.filter((c) => {
-    if (selectedDept === 'All Departments') return true;
-    return c.department === selectedDept;
-  });
+  useEffect(() => {
+    listCourseSections()
+      .then((data) => {
+        setCourses(data);
+        if (data.length > 0) setSelectedCourse(data[0]);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load courses:', err);
+        setErrorMsg('Failed to load courses. Please refresh the page.');
+        setLoading(false);
+      });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,26 +62,24 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
       const student = await getStudentByEmail(email);
       const studentId = student?.Student_ID ?? email.split('@')[0];
       const submittedDate = new Date().toISOString().slice(0, 10);
-      const requestId = Date.now() % 2147483647;
-      const sectionId = Number.parseInt(selectedCourse.section.replace(/\D/g, ''), 10);
 
-      if (Number.isNaN(sectionId)) {
-        throw new Error(`The selected section "${selectedCourse.section}" has no numeric section ID.`);
+      if (!selectedCourse) {
+        throw new Error('Please select a course.');
       }
 
-      await createRaiseCapacityRequest({
-        requestId,
+      const generatedRequestId = await createRaiseCapacityRequest({
         studentId,
-        courseId: Number.parseInt(selectedCourse.code, 10),
-        sectionId,
+        courseId: selectedCourse.Course_ID,
+        sectionId: selectedCourse.Section_ID,
+        term: selectedCourse.Term,
         reason: justification,
         submittedDate,
       });
 
       const payload: SubmittedRequestData = {
-        requestId: String(requestId),
+        requestId: generatedRequestId,
         requestType: 'Raise Capacity',
-        course: `${selectedCourse.code} - ${selectedCourse.name} (${selectedCourse.section})`,
+        course: `${selectedCourse.Course?.Course_ID ?? selectedCourse.Course_ID} - ${selectedCourse.Course?.Course_Name ?? ''} (Section ${selectedCourse.Section_ID})`,
         submittedDate,
         estimatedProcessing: '1-2 business days',
         status: 'Pending Review',
@@ -107,7 +104,6 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
 
   return (
     <div id="student-raise-capacity-page" className="p-6 max-w-7xl mx-auto flex flex-col gap-6">
-      {/* Back button & Page Title */}
       <div>
         <BackLink onClick={() => navigate('/student/dashboard')} variant="tight">
           Back to Dashboard
@@ -120,9 +116,8 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
         </p>
       </div>
 
-      {/* Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Course Selection (5 cols) */}
+        {/* Left Column: Course Selection */}
         <div className="lg:col-span-5 flex flex-col gap-4">
           <div className="bg-white p-5 rounded-2xl border border-[#E5E7EB] shadow-xs flex flex-col gap-4">
             <div className="flex items-center gap-2 pb-2 border-b border-[#F3F4F6]">
@@ -130,33 +125,23 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               <h2 className="font-bold text-sm text-[#1F2937]">Select Course</h2>
             </div>
 
-            {/* Department Filter Pills */}
-            <div className="flex items-center gap-1.5 flex-wrap text-xs font-semibold">
-              {departments.map((dept) => (
-                <button
-                  key={dept}
-                  type="button"
-                  onClick={() => setSelectedDept(dept)}
-                  className={`px-3 py-1.5 rounded-lg text-[11px] transition-all ${
-                    selectedDept === dept
-                      ? 'bg-[#059669] text-white shadow-xs'
-                      : 'bg-[#F9FAFB] border border-[#E5E7EB] text-[#4B5563] hover:bg-[#F3F4F6]'
-                  }`}
-                >
-                  {dept}
-                </button>
-              ))}
-            </div>
-
-            {/* Scrollable Course List */}
             <div className="flex flex-col gap-2.5 max-h-[480px] overflow-y-auto pr-1">
-              {filteredCourses.map((course) => {
-                const isSelected = selectedCourse.code === course.code;
+              {loading && (
+                <div className="text-xs text-[#6B7280] p-3">Loading courses...</div>
+              )}
+              {!loading && courses.length === 0 && (
+                <div className="text-xs text-[#6B7280] p-3">No courses available.</div>
+              )}
+              {courses.map((row) => {
+                const isSelected =
+                  selectedCourse?.Section_ID === row.Section_ID &&
+                  selectedCourse?.Course_ID === row.Course_ID &&
+                  selectedCourse?.Term === row.Term;
 
                 return (
                   <div
-                    key={course.code}
-                    onClick={() => setSelectedCourse(course)}
+                    key={`${row.Course_ID}-${row.Section_ID}-${row.Term}`}
+                    onClick={() => setSelectedCourse(row)}
                     className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                       isSelected
                         ? 'bg-[#F0FDF4] border-[#059669] shadow-sm ring-1 ring-[#059669]'
@@ -167,14 +152,14 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-bold text-xs text-[#059669]">
-                            {course.code}
+                            {row.Course?.Course_ID ?? row.Course_ID}
                           </span>
                           <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-[#E0F2FE] text-[#0284C7]">
-                            {course.section}
+                            Section {row.Section_ID}
                           </span>
                         </div>
                         <h4 className="font-bold text-xs text-[#1F2937] mt-0.5">
-                          {course.name}
+                          {row.Course?.Course_Name ?? 'Unknown course'}
                         </h4>
                       </div>
                       {isSelected && (
@@ -185,8 +170,13 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
                     </div>
 
                     <div className="flex items-center justify-between text-[11px] text-[#6B7280] pt-1 border-t border-[#E5E7EB]/60">
-                      <span>Seats: <strong className="text-[#1F2937]">{course.capacity}</strong></span>
-                      <span className="text-[#D97706] font-semibold">{course.pendingRequests} pending</span>
+                      <span>
+                        Seats:{' '}
+                        <strong className="text-[#1F2937]">
+                          {row.Current_Capacity}/{row.Total_Capacity}
+                        </strong>
+                      </span>
+                      <span className="text-[#D97706] font-semibold">{row.Term}</span>
                     </div>
                   </div>
                 );
@@ -195,7 +185,7 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
           </div>
         </div>
 
-        {/* Right Column: Request Form (7 cols) */}
+        {/* Right Column: Request Form */}
         <div className="lg:col-span-7 flex flex-col gap-4">
           <form
             onSubmit={handleSubmit}
@@ -213,7 +203,6 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               </div>
             )}
 
-            {/* Selected Course Preview (Light Blue Box) */}
             <div className="p-4 rounded-xl bg-[#E0F2FE] border border-[#BAE6FD] flex flex-col gap-1.5">
               <span className="text-[10px] font-bold text-[#0284C7] uppercase tracking-wider">
                 Selected Course for Capacity Increase
@@ -221,19 +210,19 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <h3 className="font-extrabold text-sm text-[#0C4A6E]">
-                    {selectedCourse.code} - {selectedCourse.name}
+                    {selectedCourse?.Course?.Course_ID ?? selectedCourse?.Course_ID ?? '—'} -{' '}
+                    {selectedCourse?.Course?.Course_Name ?? 'Select a course'}
                   </h3>
                   <p className="text-xs text-[#0369A1] mt-0.5">
-                    {selectedCourse.section} • {selectedCourse.schedule} • {selectedCourse.room}
+                    Section {selectedCourse?.Section_ID ?? '—'} • {selectedCourse?.Term ?? '—'}
                   </p>
                 </div>
                 <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-white text-[#0284C7] shadow-xs">
-                  {selectedCourse.capacity}
+                  {selectedCourse?.Current_Capacity ?? '—'}/{selectedCourse?.Total_Capacity ?? '—'}
                 </span>
               </div>
             </div>
 
-            {/* Justification for Request */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-[#1F2937]">
                 Justification for Request <span className="text-[#EF4444]">*</span>
@@ -248,7 +237,6 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               />
             </div>
 
-            {/* Supporting Documents (Optional) */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-[#1F2937]">
                 Supporting Documents (Optional)
@@ -260,7 +248,6 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               />
             </div>
 
-            {/* Priority Level */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-[#1F2937]">
                 Priority Level
@@ -276,7 +263,6 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               </select>
             </div>
 
-            {/* Request Summary Box */}
             <div className="p-4 rounded-xl bg-[#F9FAFB] border border-[#E5E7EB] flex flex-col gap-2 text-xs">
               <h4 className="font-bold text-xs text-[#1F2937]">Request Summary</h4>
               <div className="grid grid-cols-2 gap-2 text-[11px]">
@@ -286,11 +272,16 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] block">Course:</span>
-                  <span className="font-semibold text-[#1F2937]">{selectedCourse.code} ({selectedCourse.section})</span>
+                  <span className="font-semibold text-[#1F2937]">
+                    {selectedCourse?.Course?.Course_ID ?? selectedCourse?.Course_ID ?? '—'}{' '}
+                    (Section {selectedCourse?.Section_ID ?? '—'})
+                  </span>
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] block">Current Capacity:</span>
-                  <span className="font-semibold text-[#1F2937]">{selectedCourse.capacity}</span>
+                  <span className="font-semibold text-[#1F2937]">
+                    {selectedCourse?.Current_Capacity ?? '—'}/{selectedCourse?.Total_Capacity ?? '—'}
+                  </span>
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] block">Estimated Processing:</span>
@@ -299,7 +290,6 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
               </div>
             </div>
 
-            {/* Action Buttons */}
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 type="button"
