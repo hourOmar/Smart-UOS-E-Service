@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search,
@@ -8,6 +8,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { coursesList } from '../mocks/courses.mock';
+import { listRaiseCapacityRequests } from '../../../services/supabase/requests';
 import { StatCard } from '../../../components/common/StatCard';
 import { FilterTab } from '../../../components/common/FilterTab';
 
