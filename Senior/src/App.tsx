@@ -7,6 +7,7 @@ import { signOut } from './services/supabase/auth';
 
 export function App() {
   const [role, setRole] = useState<UserRole | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -14,8 +15,11 @@ export function App() {
     let mounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
-      if (!mounted || !data.session?.user.email) return;
-      setRole(getRoleFromEmail(data.session.user.email));
+      if (!mounted) return;
+      if (data.session?.user.email) {
+        setRole(getRoleFromEmail(data.session.user.email));
+      }
+      setAuthReady(true);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -23,7 +27,6 @@ export function App() {
         setRole(null);
         return;
       }
-
       setRole(getRoleFromEmail(session.user.email));
     });
 
@@ -53,6 +56,21 @@ export function App() {
       showToast(error instanceof Error ? error.message : 'Unable to log out.');
     }
   };
+
+  if (!authReady) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+        }}
+      >
+        <p style={{ fontSize: '14px', color: '#6B7280' }}>Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <BrowserRouter>
