@@ -7,8 +7,9 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { coursesList } from '../mocks/courses.mock';
 import { listRaiseCapacityRequests } from '../../../services/supabase/requests';
+import { toRequestSlug } from '../../../app/routeHelpers';
+import { supabase } from '../../../services/supabase/client';
 import { StatCard } from '../../../components/common/StatCard';
 import { FilterTab } from '../../../components/common/FilterTab';
 
@@ -16,34 +17,139 @@ interface AdminRaiseCapacityDashboardProps {
   searchQuery: string;
 }
 
+interface RequestRow {
+  Request_ID: string;
+  Request_Type: string;
+  Request_Date: string;
+  Description: string | null;
+  Current_Status: string | null;
+  Student_ID: string | null;
+  Student?: { Student_Name: string | null } | null;
+}
+
+interface CourseInfo {
+  Course_ID: number;
+  Course_Name: string;
+  Credit_Hours: number | null;
+}
+
+interface SectionInfo {
+  Section_ID: string;
+  Course_ID: number;
+  Term: string;
+  Current_Capacity: number;
+  Total_Capacity: number;
+}
+
+interface RaiseCapacityRow extends RequestRow {
+  RaiseCapacity?: {
+    Course_ID: number;
+    Section_ID: string;
+    Term: string;
+  } | null;
+  Course?: CourseInfo | null;
+  Section?: SectionInfo | null;
+}
+
 export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardProps> = ({
   searchQuery,
 }) => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<string>('All Courses');
+  const [activeTab, setActiveTab] = useState<string>('All Requests');
   const [localSearch, setLocalSearch] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  const tabs = ['All Courses', 'High Demand', 'Pending Review', 'Recently Approved'];
+  const [requests, setRequests] = useState<RaiseCapacityRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const tabs = ['All Requests', 'Pending Review', 'Approved', 'Rejected'];
 
   const effectiveSearch = localSearch || searchQuery;
 
-  const filteredCourses = coursesList.filter((c) => {
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await listRaiseCapacityRequests();
+
+        // Enrich each request with its Raise_Capacity subtype row, the
+        // referenced Course, and the Section (matched on the triple
+        // Course_ID + Section_ID + Term).
+        const enriched: RaiseCapacityRow[] = await Promise.all(
+          (raw as RequestRow[]).map(async (r) => {
+            const { data: rc } = await supabase
+              .from('Raise_Capacity')
+              .select('Course_ID, Section_ID, Term')
+              .eq('Request_ID', r.Request_ID)
+              .maybeSingle();
+
+            if (!rc) return { ...r, RaiseCapacity: null, Course: null, Section: null };
+
+            const [{ data: course }, { data: section }] = await Promise.all([
+              supabase
+                .from('Course')
+                .select('Course_ID, Course_Name, Credit_Hours')
+                .eq('Course_ID', rc.Course_ID)
+                .maybeSingle(),
+              supabase
+                .from('Section')
+                .select('Section_ID, Course_ID, Term, Current_Capacity, Total_Capacity')
+                .eq('Section_ID', rc.Section_ID)
+                .eq('Course_ID', rc.Course_ID)
+                .eq('Term', rc.Term)
+                .maybeSingle(),
+            ]);
+
+            return {
+              ...r,
+              RaiseCapacity: rc,
+              Course: course ?? null,
+              Section: section ?? null,
+            };
+          })
+        );
+
+        setRequests(enriched);
+      } catch (err) {
+        console.error('Failed to load raise capacity requests:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const filteredRequests = requests.filter((r) => {
+    const q = effectiveSearch.toLowerCase();
+    const courseId = r.Course?.Course_ID ?? r.RaiseCapacity?.Course_ID ?? '';
+    const courseName = r.Course?.Course_Name ?? '';
+    const studentId = r.Student_ID ?? '';
+    const studentName = r.Student?.Student_Name ?? '';
+
     const matchesSearch =
       !effectiveSearch ||
-      c.code.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-      c.name.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-      c.instructor.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-      c.department.toLowerCase().includes(effectiveSearch.toLowerCase());
+      String(courseId).toLowerCase().includes(q) ||
+      courseName.toLowerCase().includes(q) ||
+      studentId.toLowerCase().includes(q) ||
+      studentName.toLowerCase().includes(q);
 
+    const status = r.Current_Status ?? '';
     const matchesTab =
-      activeTab === 'All Courses' ||
-      (activeTab === 'High Demand' && c.pendingRequests >= 5) ||
-      (activeTab === 'Pending Review' && c.pendingRequests > 0) ||
-      (activeTab === 'Recently Approved' && !c.critical);
+      activeTab === 'All Requests' ||
+      (activeTab === 'Pending Review' && status === 'In Progress') ||
+      (activeTab === 'Approved' && status === 'Completed') ||
+      (activeTab === 'Rejected' && status === 'Rejected');
 
     return matchesSearch && matchesTab;
   });
+
+  // Live stat counts from real data
+  const totalRequests = requests.length;
+  const pendingCount = requests.filter((r) => r.Current_Status === 'In Progress').length;
+  const approvedCount = requests.filter((r) => r.Current_Status === 'Completed').length;
+  const rejectedCount = requests.filter((r) => r.Current_Status === 'Rejected').length;
+
+  const goToReview = (requestId: string) => {
+    navigate(`/admin/requests/raise-capacity/review/${toRequestSlug(requestId)}`);
+  };
 
   return (
     <div id="admin-raise-capacity-dashboard" className="p-6 max-w-7xl mx-auto flex flex-col gap-6">
@@ -63,7 +169,7 @@ export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardPr
             <Search className="w-4 h-4 text-[#9CA3AF] absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search by course code or name..."
+              placeholder="Search by course or student..."
               value={localSearch}
               onChange={(e) => setLocalSearch(e.target.value)}
               className="w-full pl-9 pr-3.5 py-2 bg-white border border-[#E5E7EB] rounded-xl text-xs text-[#1F2937] placeholder-[#9CA3AF] focus:outline-none focus:ring-2 focus:ring-[#059669]/20 focus:border-[#059669]"
@@ -76,48 +182,39 @@ export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardPr
         </div>
       </div>
 
-      {/*
-        PLACEHOLDER DASHBOARD METRICS
-        The 4 stat values below are inline literals, not yet extracted
-        to a mock file (unlike the dashboard's top-line stats).
-        TODO: Replace with a backend API response calculated from
-        course/request records.
-        Future source: FastAPI backend-calculated aggregate endpoint.
-        Persistence: TBD — backend persistence decision.
-      */}
-      {/* 4 Statistics Cards in a Row */}
+      {/* Stat Cards — computed from real data */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           icon="📚"
           iconColorClass="bg-[#F3F4F6] text-[#4B5563]"
-          value="[24]"
+          value={String(totalRequests)}
           valueColorClass="text-[#1F2937]"
-          label="Total Courses"
+          label="Total Requests"
         />
         <StatCard
           icon="⏳"
           iconColorClass="bg-[#FEF3C7] text-[#D97706]"
-          value="[18]"
+          value={String(pendingCount)}
           valueColorClass="text-[#D97706]"
-          label="Pending Requests"
+          label="Pending Review"
         />
         <StatCard
           icon="✅"
           iconColorClass="bg-[#D1FAE5] text-[#059669]"
-          value="[6]"
+          value={String(approvedCount)}
           valueColorClass="text-[#059669]"
-          label="Approved Today"
+          label="Approved"
         />
         <StatCard
           icon="⚠️"
           iconColorClass="bg-[#FEE2E2] text-[#EF4444]"
-          value="[4]"
+          value={String(rejectedCount)}
           valueColorClass="text-[#EF4444]"
-          label="Critical Capacity"
+          label="Rejected"
         />
       </div>
 
-      {/* Main Courses Table Card */}
+      {/* Requests Table Card */}
       <div className="bg-white rounded-2xl border border-[#E5E7EB] shadow-xs overflow-hidden">
         {/* Filter Tabs */}
         <div className="p-5 border-b border-[#F3F4F6] flex items-center justify-between flex-wrap gap-3">
@@ -133,55 +230,73 @@ export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardPr
             ))}
           </div>
           <span className="text-xs text-[#6B7280]">
-            Showing <strong className="text-[#1F2937]">6</strong> of{' '}
-            <strong className="text-[#1F2937]">24</strong> courses
+            Showing <strong className="text-[#1F2937]">{filteredRequests.length}</strong> of{' '}
+            <strong className="text-[#1F2937]">{totalRequests}</strong> requests
           </span>
         </div>
 
-        {/* Courses Table */}
+        {/* Requests Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-[#1F2937]">
             <thead className="bg-[#F9FAFB] text-[#6B7280] uppercase text-[10px] font-bold tracking-wider border-b border-[#E5E7EB]">
               <tr>
-                <th className="py-3.5 px-4">Course Code</th>
-                <th className="py-3.5 px-4">Course Name</th>
-                <th className="py-3.5 px-4">Section</th>
+                <th className="py-3.5 px-4">Request ID</th>
+                <th className="py-3.5 px-4">Student</th>
+                <th className="py-3.5 px-4">Course</th>
                 <th className="py-3.5 px-4 w-48">Capacity</th>
-                <th className="py-3.5 px-4">Pending Requests</th>
+                <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F3F4F6]">
-              {filteredCourses.slice(0, 6).map((course, idx) => {
-                const percent = Math.min(
-                  100,
-                  Math.round((course.currentEnrollment / course.maxCapacity) * 100)
-                );
-                const isOver = course.currentEnrollment >= course.maxCapacity;
+              {loading && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[#6B7280]">
+                    Loading requests...
+                  </td>
+                </tr>
+              )}
+              {!loading && filteredRequests.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[#6B7280]">
+                    No raise capacity requests found.
+                  </td>
+                </tr>
+              )}
+              {!loading && filteredRequests.map((r) => {
+                const current = r.Section?.Current_Capacity ?? 0;
+                const total = r.Section?.Total_Capacity ?? 0;
+                const percent = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+                const isOver = current >= total && total > 0;
 
                 return (
                   <tr
-                    key={idx}
-                    onClick={() => navigate(`/admin/requests/raise-capacity/courses/${course.code}`)}
+                    key={r.Request_ID}
+                    onClick={() => goToReview(r.Request_ID)}
                     className="hover:bg-[#F9FAFB] transition-colors cursor-pointer group"
                   >
                     <td className="py-3.5 px-4 font-mono font-bold text-[#059669]">
-                      {course.code}
+                      {r.Request_ID}
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-[#1F2937] group-hover:text-[#059669]">
-                      {course.name}
-                      <span className="block text-[11px] text-[#6B7280] font-normal">
-                        {course.instructor} • {course.department}
+                      {r.Student?.Student_Name ?? r.Student_ID ?? '—'}
+                      <span className="block text-[11px] text-[#6B7280] font-normal font-mono">
+                        {r.Student_ID ?? ''}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
-                      <span className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-[#F3F4F6] text-[#4B5563]">
-                        {course.section}
+                      <span className="font-semibold text-[#1F2937]">
+                        {r.Course?.Course_Name ?? '—'}
+                      </span>
+                      <span className="block text-[11px] text-[#6B7280] font-normal font-mono">
+                        {r.RaiseCapacity
+                          ? `${r.RaiseCapacity.Course_ID} • Section ${r.RaiseCapacity.Section_ID} • ${r.RaiseCapacity.Term}`
+                          : ''}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
                       <div className="flex items-center justify-between text-[11px] mb-1">
-                        <span className="font-semibold">{course.capacity}</span>
+                        <span className="font-semibold">{current}/{total}</span>
                         <span className={`font-bold ${isOver ? 'text-[#EF4444]' : 'text-[#059669]'}`}>
                           {percent}%
                         </span>
@@ -196,18 +311,28 @@ export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardPr
                       </div>
                     </td>
                     <td className="py-3.5 px-4">
-                      <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#D97706] inline-flex items-center gap-1">
-                        {course.pendingRequests} requests
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold inline-flex items-center gap-1 ${
+                          r.Current_Status === 'Completed'
+                            ? 'bg-[#D1FAE5] text-[#059669]'
+                            : r.Current_Status === 'Rejected'
+                            ? 'bg-[#FEE2E2] text-[#EF4444]'
+                            : 'bg-[#FEF3C7] text-[#D97706]'
+                        }`}
+                      >
+                        {r.Current_Status === 'Completed'
+                          ? 'Approved'
+                          : r.Current_Status ?? 'In Progress'}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          navigate(`/admin/requests/raise-capacity/courses/${course.code}`);
+                          goToReview(r.Request_ID);
                         }}
                         className="p-2 rounded-xl bg-[#F9FAFB] group-hover:bg-[#059669] group-hover:text-white text-[#4B5563] transition-all"
-                        aria-label="View course section"
+                        aria-label="Review request"
                       >
                         <ArrowRight className="w-4 h-4" />
                       </button>
@@ -219,11 +344,11 @@ export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardPr
           </table>
         </div>
 
-        {/* Pagination */}
+        {/* Pagination — simplified since we now have real filtered data */}
         <div className="p-4 border-t border-[#F3F4F6] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[#6B7280]">
           <div>
-            Showing <span className="font-bold text-[#1F2937]">6</span> of{' '}
-            <span className="font-bold text-[#1F2937]">24</span> courses
+            Showing <span className="font-bold text-[#1F2937]">{filteredRequests.length}</span> of{' '}
+            <span className="font-bold text-[#1F2937]">{totalRequests}</span> requests
           </div>
           <div className="flex items-center gap-1.5">
             <button
@@ -233,22 +358,11 @@ export const AdminRaiseCapacityDashboard: React.FC<AdminRaiseCapacityDashboardPr
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
-            {[1, 2, 3, 4].map((num) => (
-              <button
-                key={num}
-                onClick={() => setCurrentPage(num)}
-                className={`w-7 h-7 rounded-lg text-xs font-bold transition-all ${
-                  currentPage === num
-                    ? 'bg-[#059669] text-white'
-                    : 'bg-white border border-[#E5E7EB] text-[#4B5563] hover:bg-[#F3F4F6]'
-                }`}
-              >
-                {num}
-              </button>
-            ))}
+            <span className="px-3 py-1.5 text-xs font-bold text-[#1F2937]">
+              Page {currentPage}
+            </span>
             <button
-              onClick={() => setCurrentPage(Math.min(4, currentPage + 1))}
-              disabled={currentPage === 4}
+              onClick={() => setCurrentPage(currentPage + 1)}
               className="p-1.5 rounded-lg border border-[#E5E7EB] hover:bg-[#F3F4F6] disabled:opacity-40"
             >
               <ChevronRight className="w-4 h-4" />
