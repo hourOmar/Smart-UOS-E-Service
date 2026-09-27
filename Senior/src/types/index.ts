@@ -2,16 +2,7 @@ export type UserRole = 'student' | 'admin';
 
 export type PriorityLevel = 'High' | 'Medium' | 'Low';
 
-export type RequestStatus =
-  | 'Approved'
-  | 'Rejected'
-  | 'In Progress'
-  | 'Pending Review'
-  | 'Secretary Review'
-  | 'HOD Review'
-  | 'Committee Review'
-  | 'Awaiting Documents'
-  | 'Active';
+export type RequestStatus = 'In Progress' | 'Completed' | 'Rejected';
 
 export interface StudentProfile {
   name: string;

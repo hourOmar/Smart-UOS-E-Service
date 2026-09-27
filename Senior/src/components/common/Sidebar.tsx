@@ -11,9 +11,11 @@ import {
 } from 'lucide-react';
 import { UserRole } from '../../types';
 import { defaultStudentProfile } from '../../mocks/students.mock';
-import { defaultAdminProfile } from '../../mocks/admins.mock';
 import { supabase } from '../../services/supabase/client';
-import { getStudentByEmail } from '../../services/supabase/students';
+import {
+  getStudentByEmail,
+  getAuthorizedStaffByEmail,
+} from '../../services/supabase/students';
 import { getProgramById } from '../../services/supabase/programs';
 
 interface SidebarProps {
@@ -41,9 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const isStudent = role === 'student';
   const base = isStudent ? '/student' : '/admin';
 
-  // Falls back to the mock placeholder profile if there's no logged-in
-  // Supabase Auth session yet, or if the logged-in email doesn't match
-  // a row in the Student table.
+  // ─── Student profile state ────────────────────────────────────────
   const [profile, setProfile] = useState({
     name: defaultStudentProfile.name,
     id: defaultStudentProfile.id,
@@ -51,6 +51,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
     initials: defaultStudentProfile.initials,
   });
 
+  // ─── Admin profile state ──────────────────────────────────────────
+  const [adminProfile, setAdminProfile] = useState({
+    name: '—',
+    initials: '—',
+    role: 'Authorized Staff',
+  });
+
+  // ─── Load student data ────────────────────────────────────────────
   useEffect(() => {
     if (!isStudent) return;
     let cancelled = false;
@@ -84,14 +92,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
       cancelled = true;
     };
   }, [isStudent]);
+
+  // ─── Load admin data ──────────────────────────────────────────────
+  useEffect(() => {
+    if (isStudent) return;
+    let cancelled = false;
+
+    supabase.auth.getUser().then(async ({ data }) => {
+      const email = data.user?.email;
+      if (!email) return;
+
+      try {
+        const staff = await getAuthorizedStaffByEmail(email);
+        if (!cancelled && staff) {
+          setAdminProfile({
+            name: staff.Staff_Name,
+            initials: initialsFromName(staff.Staff_Name),
+            role: 'Authorized Staff',
+          });
+        }
+      } catch (err) {
+        console.error('Sidebar: failed to load admin profile:', err);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isStudent]);
+
   const widthClass = isStudent ? 'w-full md:w-[306px]' : 'w-full md:w-[280px]';
 
   const isDashboardActive = pathname === `${base}/dashboard`;
 
-  // Preserves the original (pre-routing) behavior exactly: only
-  // Raise Capacity and Incomplete Exam pages light up "Requests" for
-  // either role — Grade Change/Course Equivalency/Program Change
-  // never did, even before this migration.
   const isRequestsActive =
     pathname.startsWith(`${base}/requests/raise-capacity`) ||
     pathname.startsWith(`${base}/requests/incomplete-exam`);
@@ -140,16 +173,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-full bg-[#059669] text-white flex items-center justify-center font-bold text-sm shadow-sm ring-2 ring-[#D1FAE5]">
-              {isStudent ? profile.initials : defaultAdminProfile.initials}
+              {isStudent ? profile.initials : adminProfile.initials}
             </div>
             <div className="overflow-hidden flex-1">
               <h4 className="font-semibold text-xs text-[#1F2937] truncate">
-                {isStudent ? profile.name : defaultAdminProfile.name}
+                {isStudent ? profile.name : adminProfile.name}
               </h4>
               <p className="text-[11px] text-[#6B7280] truncate mt-0.5">
                 {isStudent
                   ? `ID: ${profile.id} | ${profile.department}`
-                  : defaultAdminProfile.role}
+                  : adminProfile.role}
               </p>
             </div>
           </div>
@@ -197,14 +230,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </button>
 
-          {/*
-            PLACEHOLDER DASHBOARD METRIC
-            The "[4]"/"[24]" badge count below is an inline literal.
-            TODO: Replace with a backend-calculated request count.
-            Future source: FastAPI backend-calculated endpoint.
-            Persistence: TBD — backend persistence decision.
-          */}
-          {/* Requests Tab (All Requests for Admin / My Requests for Student) */}
+          {/* Requests Tab */}
           <button
             id="sidebar-nav-requests"
             onClick={() =>
@@ -276,15 +302,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/*
-          PLACEHOLDER — FUTURE SOURCE TBD
-          The active semester and withdrawal deadline below could be a
-          low-frequency admin-maintained "academic terms" record via
-          FastAPI (persistence: TBD — backend persistence decision),
-          or a legitimate static constant updated manually per term.
-          Not confirmed either way.
-          TODO: Confirm with the project domain design.
-        */}
         {/* Quick Info / University Links */}
         <div className="bg-[#F0FDF4] border border-[#BBF7D0] p-3 rounded-xl text-[11px] text-[#166534]">
           <p className="font-semibold mb-1 flex items-center gap-1.5">

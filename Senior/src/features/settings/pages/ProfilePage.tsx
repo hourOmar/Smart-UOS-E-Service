@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { UserRole } from '../../../types';
 import { defaultStudentProfile } from '../../../mocks/students.mock';
-import { defaultAdminProfile } from '../../../mocks/admins.mock';
 import { supabase } from '../../../services/supabase/client';
-import { getStudentByEmail } from '../../../services/supabase/students';
+import {
+  getStudentByEmail,
+  getAuthorizedStaffByEmail,
+} from '../../../services/supabase/students';
 import { getProgramById } from '../../../services/supabase/programs';
 import { listStudentRequests } from '../../../services/supabase/requests';
 
@@ -25,12 +27,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
   const isStudent = role === 'student';
   const [isEditing, setIsEditing] = useState(false);
 
-  // Only fields that actually exist in the live schema are fetched here
-  // (Student_Name, Student_ID, Student_Email, CGPA, Completed_Hours,
-  // Program → Program_Name/College_Name, request counts). Fields with
-  // no backing column yet (DOB, nationality, phone, advisor, academic
-  // standing, expected graduation, current semester) stay as the
-  // original bracketed placeholders until those columns exist.
+  // ─── Student profile state ────────────────────────────────────────
   const [profile, setProfile] = useState({
     name: defaultStudentProfile.name,
     id: defaultStudentProfile.id,
@@ -44,6 +41,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
   const [totalRequests, setTotalRequests] = useState<number | null>(null);
   const [approvedRequests, setApprovedRequests] = useState<number | null>(null);
 
+  // ─── Admin profile state ──────────────────────────────────────────
+  const [adminProfile, setAdminProfile] = useState({
+    name: '—',
+    role: '—',
+    email: '—',
+    initials: '—',
+    office: '—',
+    staffId: '—',
+  });
+
+  // ─── Live counts for the admin overview cards ─────────────────────
+  const [counts, setCounts] = useState({
+    students: 0,
+    courses: 0,
+    sections: 0,
+    requests: 0,
+  });
+
+  // ─── Load student data when the role is student ───────────────────
   useEffect(() => {
     if (!isStudent) return;
     let cancelled = false;
@@ -86,11 +102,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
         if (!cancelled) {
           setTotalRequests(requests.length);
           setApprovedRequests(
-            requests.filter((r) => r.status === 'Approved').length
+            requests.filter((r) => r.status === 'Completed').length
           );
         }
       } catch (err) {
-        console.error('Failed to load profile from Supabase:', err);
+        console.error('Failed to load student profile:', err);
       }
     };
 
@@ -98,6 +114,60 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
     return () => {
       cancelled = true;
     };
+  }, [isStudent]);
+
+  // ─── Load admin data when the role is admin ───────────────────────
+  useEffect(() => {
+    if (isStudent) return;
+    let cancelled = false;
+
+    const load = async () => {
+      const { data } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (!email) return;
+
+      try {
+        const staff = await getAuthorizedStaffByEmail(email);
+        if (!staff || cancelled) return;
+
+        setAdminProfile({
+          name: staff.Staff_Name,
+          role: 'Authorized Staff',
+          email: staff.Staff_Email,
+          initials: initialsFromName(staff.Staff_Name),
+          office: staff.Office_Location ?? '—',
+          staffId: staff.Staff_ID,
+        });
+      } catch (err) {
+        console.error('Failed to load admin profile:', err);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [isStudent]);
+
+  // ─── Load live counts (admin only) ────────────────────────────────
+  useEffect(() => {
+    if (isStudent) return;
+
+    (async () => {
+      const [studentsRes, coursesRes, sectionsRes, requestsRes] = await Promise.all([
+        supabase.from('Student').select('*', { count: 'exact', head: true }),
+        supabase.from('Course').select('*', { count: 'exact', head: true }),
+        supabase.from('Section').select('*', { count: 'exact', head: true }),
+        supabase.from('Request').select('*', { count: 'exact', head: true }),
+      ]);
+
+      setCounts({
+        students: studentsRes.count ?? 0,
+        courses: coursesRes.count ?? 0,
+        sections: sectionsRes.count ?? 0,
+        requests: requestsRes.count ?? 0,
+      });
+    })();
   }, [isStudent]);
 
   return (
@@ -114,27 +184,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
               id="profile-avatar-circle"
               className="w-24 h-24 rounded-full bg-[#059669] border-4 border-white text-white flex items-center justify-center text-2xl font-black shadow-md"
             >
-              {isStudent ? profile.initials : defaultAdminProfile.initials}
+              {isStudent ? profile.initials : adminProfile.initials}
             </div>
 
             <div className="mb-1">
               <h1 className="text-xl sm:text-2xl font-extrabold text-[#1F2937]">
-                {isStudent ? profile.name : defaultAdminProfile.name}
+                {isStudent ? profile.name : adminProfile.name}
               </h1>
               <p className="text-xs font-semibold text-[#6B7280] mt-0.5">
                 {isStudent
                   ? `Student ID: ${profile.id}`
-                  : defaultAdminProfile.role}
+                  : `${adminProfile.role} • Staff ID: ${adminProfile.staffId}`}
               </p>
               <p className="text-xs text-[#6B7280] mt-0.5">
                 {isStudent
-                  ? `${defaultStudentProfile.department} | ${defaultStudentProfile.year}`
-                  : `${defaultAdminProfile.department} | ${defaultAdminProfile.office}`}
+                  ? `${profile.program}`
+                  : `Office: ${adminProfile.office}`}
               </p>
               <p className="text-xs text-[#9CA3AF] mt-0.5">
-                {isStudent
-                  ? `${profile.email} | ${defaultStudentProfile.phone}`
-                  : `${defaultAdminProfile.email} | ${defaultAdminProfile.phone}`}
+                {isStudent ? profile.email : adminProfile.email}
               </p>
             </div>
           </div>
@@ -160,9 +228,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
       </div>
 
       {isStudent ? (
-        /* STUDENT PROFILE CONTENT */
+        /* ─────────── STUDENT PROFILE CONTENT ─────────── */
         <>
-          {/* 4 Stat Cards in a row */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
@@ -190,7 +257,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
             </div>
           </div>
 
-          {/* Personal Information Card (2 columns) */}
           <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] shadow-xs">
             <h2 className="text-sm font-bold text-[#1F2937] pb-3 border-b border-[#F3F4F6] mb-4">
               Personal Information
@@ -202,151 +268,85 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ role, onToast }) => {
                   <span className="font-semibold text-[#1F2937]">{profile.name}</span>
                 </div>
                 <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Nationality</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.nationality}</span>
-                </div>
-                <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Email Address</span>
                   <span className="font-semibold text-[#1F2937] font-mono">{profile.email}</span>
                 </div>
+                <div>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Student ID</span>
+                  <span className="font-semibold text-[#1F2937] font-mono">{profile.id}</span>
+                </div>
               </div>
 
               <div className="flex flex-col gap-3">
                 <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Date of Birth</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.dob}</span>
-                </div>
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Enrollment Date</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.enrollment}</span>
-                </div>
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Phone Number</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.phone}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Academic Information Card (2 columns) */}
-          <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] shadow-xs">
-            <h2 className="text-sm font-bold text-[#1F2937] pb-3 border-b border-[#F3F4F6] mb-4">
-              Academic Information
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-              <div className="flex flex-col gap-3">
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Degree Program</span>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Program</span>
                   <span className="font-semibold text-[#1F2937]">{profile.program}</span>
                 </div>
                 <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Academic Standing</span>
-                  <span className="font-bold text-[#059669] bg-[#D1FAE5] px-2.5 py-0.5 rounded-full inline-block mt-0.5">
-                    {defaultStudentProfile.standing}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Expected Graduation</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.graduation}</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Faculty & College</span>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">College</span>
                   <span className="font-semibold text-[#1F2937]">{profile.college}</span>
                 </div>
                 <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Academic Advisor</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.advisor}</span>
-                </div>
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Current Semester</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultStudentProfile.semester}</span>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">CGPA</span>
+                  <span className="font-semibold text-[#1F2937]">{profile.gpa}</span>
                 </div>
               </div>
             </div>
           </div>
         </>
       ) : (
-        /* ADMIN PROFILE CONTENT */
+        /* ─────────── ADMIN PROFILE CONTENT ─────────── */
         <>
-          {/* Department Overview stats */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                {defaultAdminProfile.facultyMembers}
+                {counts.students}
               </span>
-              <p className="text-xs text-[#6B7280] font-medium mt-1">Faculty Members</p>
+              <p className="text-xs text-[#6B7280] font-medium mt-1">Registered Students</p>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                {defaultAdminProfile.studentsCount}
+                {counts.courses}
               </span>
-              <p className="text-xs text-[#6B7280] font-medium mt-1">Enrolled Students</p>
+              <p className="text-xs text-[#6B7280] font-medium mt-1">Courses</p>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                {defaultAdminProfile.coursesCount}
+                {counts.sections}
               </span>
-              <p className="text-xs text-[#6B7280] font-medium mt-1">Offered Courses</p>
+              <p className="text-xs text-[#6B7280] font-medium mt-1">Sections</p>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-[#E5E7EB] shadow-xs">
               <span className="text-2xl font-extrabold text-[#059669]">
-                {defaultAdminProfile.programsCount}
+                {counts.requests}
               </span>
-              <p className="text-xs text-[#6B7280] font-medium mt-1">Active Programs</p>
+              <p className="text-xs text-[#6B7280] font-medium mt-1">Total Requests</p>
             </div>
           </div>
 
-          {/* Professional & Academic Qualifications */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] shadow-xs">
-              <h2 className="text-sm font-bold text-[#1F2937] pb-3 border-b border-[#F3F4F6] mb-4">
-                Professional Information
-              </h2>
-              <div className="flex flex-col gap-3 text-xs">
+          <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] shadow-xs">
+            <h2 className="text-sm font-bold text-[#1F2937] pb-3 border-b border-[#F3F4F6] mb-4">
+              Professional Information
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+              <div className="flex flex-col gap-3">
                 <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Administrative Title</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultAdminProfile.role}</span>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Staff ID</span>
+                  <span className="font-semibold text-[#1F2937] font-mono">{adminProfile.staffId}</span>
+                </div>
+                <div>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Email</span>
+                  <span className="font-semibold text-[#1F2937] font-mono">{adminProfile.email}</span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-3">
+                <div>
+                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Role</span>
+                  <span className="font-semibold text-[#1F2937]">{adminProfile.role}</span>
                 </div>
                 <div>
                   <span className="text-[#9CA3AF] text-[11px] font-medium block">Office Location</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultAdminProfile.office}</span>
-                </div>
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Department</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultAdminProfile.department}</span>
-                </div>
-                <div>
-                  <span className="text-[#9CA3AF] text-[11px] font-medium block">Academic Qualification</span>
-                  <span className="font-semibold text-[#1F2937]">{defaultAdminProfile.qualification}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-[#E5E7EB] shadow-xs">
-              {/*
-                PLACEHOLDER ACTIVITY FEED
-                TODO: Replace with data returned by the FastAPI backend.
-                Future source: FastAPI backend (audit/activity log).
-                Persistence: TBD — backend persistence decision.
-              */}
-              <h2 className="text-sm font-bold text-[#1F2937] pb-3 border-b border-[#F3F4F6] mb-4">
-                Recent Administrative Activity
-              </h2>
-              <div className="flex flex-col gap-3 text-xs">
-                <div className="p-2.5 bg-[#F9FAFB] rounded-xl">
-                  <p className="font-semibold text-[#1F2937]">Approved Capacity for Section 31</p>
-                  <span className="text-[10px] text-[#6B7280]">2 hours ago • Programming I</span>
-                </div>
-                <div className="p-2.5 bg-[#F9FAFB] rounded-xl">
-                  <p className="font-semibold text-[#1F2937]">Reviewed Medical Petition #IE-2026-042</p>
-                  <span className="text-[10px] text-[#6B7280]">Yesterday • Calculus I</span>
-                </div>
-                <div className="p-2.5 bg-[#F9FAFB] rounded-xl">
-                  <p className="font-semibold text-[#1F2937]">Updated Course Schedule Capacity Limits</p>
-                  <span className="text-[10px] text-[#6B7280]">3 days ago • Registrar Portal</span>
+                  <span className="font-semibold text-[#1F2937]">{adminProfile.office}</span>
                 </div>
               </div>
             </div>
