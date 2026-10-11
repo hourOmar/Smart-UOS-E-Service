@@ -2,6 +2,23 @@ import { supabase } from './client';
 import { AcademicRequest, PriorityLevel, RequestStatus } from '../../types';
 
 /**
+ * What the Prioritization agent saved for a Raise Capacity request
+ * (Raise_Capacity.Priority_Result, a JSON column).
+ */
+interface PriorityResultJson {
+  priority?: string;
+  reasoning?: string;
+  factor_explanations?: Record<string, string>;
+  key_evidence?: string[];
+}
+
+/** One joined Raise_Capacity row (only the agent-related columns). */
+interface RaiseCapacityJoin {
+  Priority_Level: string | null;
+  Priority_Result: PriorityResultJson | null;
+}
+
+/**
  * Row returned by the Request table, including the joined Student's name.
  * We select `Student(Student_Name)` so the request row carries the real name.
  */
@@ -16,9 +33,18 @@ interface RequestViewRow {
   Current_Status: string | null;
   Student_ID: string | null;
   Student?: { Student_Name: string | null } | null;
+  // Joined in via REQUEST_SELECT below, only present for Raise Capacity rows.
+  // Supabase returns an OBJECT if Request_ID is unique in Raise_Capacity and
+  // an ARRAY if it is not, so we accept both and handle it in rowToRequest.
+  Raise_Capacity?: RaiseCapacityJoin | RaiseCapacityJoin[] | null;
 }
 
 function rowToRequest(row: RequestViewRow): AcademicRequest {
+  // Works whether Supabase gave us an object or an array
+  const raiseCapacity = Array.isArray(row.Raise_Capacity)
+    ? row.Raise_Capacity[0]
+    : row.Raise_Capacity;
+
   return {
     id: String(row.Request_ID),
     studentName: row.Student?.Student_Name ?? 'Unknown',
@@ -33,14 +59,16 @@ function rowToRequest(row: RequestViewRow): AcademicRequest {
     status: (row.Current_Status ?? 'In Progress') as RequestStatus,
     notes: row.Description ?? undefined,
     reason: row.Description ?? undefined,
+    // The agent decision saved in the database, if any
+    priorityLevel: raiseCapacity?.Priority_Level ?? null,
+    priorityResult: raiseCapacity?.Priority_Result ?? null,
   };
 }
 
-/**
- * Fetch requests with the student's name joined in.
- * The FK is Request.Student_ID -> Student.Student_ID.
- */
-const REQUEST_SELECT = '*, Student(Student_Name)';
+// Also join Raise_Capacity so the dashboard can read an already-computed
+// priority (and its reasoning) without re-running the agent every load.
+const REQUEST_SELECT =
+  '*, Student(Student_Name), Raise_Capacity(Priority_Level, Priority_Result)';
 
 export async function listActiveRequests(): Promise<AcademicRequest[]> {
   const { data, error } = await supabase

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -11,9 +11,12 @@ import {
   Scale,
 } from 'lucide-react';
 import { toRequestSlug } from '../../../app/routeHelpers';
-import { supabase } from '../../../services/supabase/client';
 import { listActiveRequests } from '../../../services/supabase/requests';
 import { StatCard } from '../../../components/common/StatCard';
+import {
+  prioritizeRaiseCapacityRequest,
+  type PrioritizationResult,
+} from '../../../services/api/agents.service';
 
 interface AdminDashboardProps {
   searchQuery: string;
@@ -27,7 +30,35 @@ interface RequestRow {
   Current_Status: string | null;
   Student_ID: string | null;
   Student?: { Student_Name: string | null } | null;
+  // Agent output saved in the database (Raise_Capacity.Priority_Level / Priority_Result)
+  Priority_Level: string | null;
+  Priority_Reasoning: string | null;
 }
+
+// Converts what listActiveRequests() returns into the rows this page uses.
+const toRows = (data: any[]): RequestRow[] =>
+  data.map((r) => ({
+    Request_ID: r.id,
+    Request_Type: r.type,
+    Request_Date: r.submittedDate,
+    Description: r.reason ?? r.notes ?? null,
+    Current_Status: r.status,
+    Student_ID: r.studentId,
+    Student: r.studentName ? { Student_Name: r.studentName } : null,
+    Priority_Level: r.priorityLevel ?? null,
+    Priority_Reasoning: r.priorityResult?.reasoning ?? null,
+  }));
+
+// High first, then Medium, then Low, then "not analyzed yet".
+const priorityRank = (level: string | null): number => {
+  const v = (level ?? '').toLowerCase();
+  if (v.includes('high')) return 0;
+  if (v.includes('medium')) return 1;
+  if (v.includes('low')) return 2;
+  return 3;
+};
+
+const POLL_INTERVAL_MS = 5000;
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   searchQuery,
@@ -38,6 +69,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const [requests, setRequests] = useState<RequestRow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Results this tab just received from the agent. They are layered on top of
+  // the database rows so a refresh poll can never make a badge flicker back.
+  const [localPriorities, setLocalPriorities] = useState<
+    Record<string, PrioritizationResult>
+  >({});
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
+
+  // Requests this tab already sent to the agent (so each is sent only once).
+  const startedRef = useRef<Set<string>>(new Set());
+  const runningRef = useRef<boolean>(false);
 
   const statusFilters = [
     'All Requests',
@@ -85,30 +127,121 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     },
   ];
 
+  const fetchRequests = useCallback(async () => {
+    const data = await listActiveRequests();
+    setRequests(toRows(data as any[]));
+  }, []);
+
+  // 1) Initial load: requests come WITH their saved priority from the database.
   useEffect(() => {
     (async () => {
       try {
-        const data = await listActiveRequests();
-        // Convert AcademicRequest rows to our local RequestRow shape.
-        // `listActiveRequests` returns AcademicRequest, which already
-        // has `id`, `studentName`, `type`, `status`, etc.
-        const rows: RequestRow[] = (data as any[]).map((r) => ({
-          Request_ID: r.id,
-          Request_Type: r.type,
-          Request_Date: r.submittedDate,
-          Description: r.reason ?? r.notes ?? null,
-          Current_Status: r.status,
-          Student_ID: r.studentId,
-          Student: r.studentName ? { Student_Name: r.studentName } : null,
-        }));
-        setRequests(rows);
+        await fetchRequests();
       } catch (err) {
         console.error('Failed to load requests:', err);
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [fetchRequests]);
+
+  // 2) Keep the table fresh so a request a student just submitted (and its
+  //    priority, once the agent finishes) appears without a manual refresh.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      fetchRequests().catch((err) => console.error('Refresh failed:', err));
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [fetchRequests]);
+
+  // The priority to show for a row: saved one first, then one just received.
+  const getLevel = (req: RequestRow): string | null =>
+    req.Priority_Level ?? localPriorities[req.Request_ID]?.priority ?? null;
+
+  const getReasoning = (req: RequestRow): string =>
+    req.Priority_Reasoning ?? localPriorities[req.Request_ID]?.reasoning ?? '';
+
+  // 3) Automatically analyze pending Raise Capacity requests that have no
+  //    saved priority yet. One at a time (to be gentle on Gemini's quota).
+  //    The backend saves each result, so this happens once per request, ever.
+  useEffect(() => {
+    if (runningRef.current) return;
+
+    const missing = requests.filter(
+      (r) =>
+        r.Request_Type === 'Raise Capacity' &&
+        r.Current_Status === 'In Progress' &&
+        !r.Priority_Level &&
+        !localPriorities[r.Request_ID] &&
+        !startedRef.current.has(r.Request_ID)
+    );
+    if (missing.length === 0) return;
+
+    runningRef.current = true;
+    (async () => {
+      for (const req of missing) {
+        startedRef.current.add(req.Request_ID);
+        try {
+          const result = await prioritizeRaiseCapacityRequest(req.Request_ID);
+          setLocalPriorities((p) => ({ ...p, [req.Request_ID]: result }));
+        } catch (err) {
+          console.error('Prioritization failed for', req.Request_ID, err);
+          setFailed((f) => ({ ...f, [req.Request_ID]: true }));
+        }
+      }
+      runningRef.current = false;
+    })();
+  }, [requests, localPriorities, failed]);
+
+  const retryPrioritization = (requestId: string) => {
+    startedRef.current.delete(requestId);
+    setFailed((f) => ({ ...f, [requestId]: false }));
+  };
+
+  const getPriorityBadgeClass = (priority: string) => {
+    const p = (priority ?? '').toLowerCase();
+    if (p.includes('high')) return 'bg-[#FEE2E2] text-[#EF4444]';
+    if (p.includes('medium')) return 'bg-[#FEF3C7] text-[#D97706]';
+    if (p.includes('low')) return 'bg-[#D1FAE5] text-[#059669]';
+    return 'bg-[#F3F4F6] text-[#4B5563]';
+  };
+
+  const renderPriorityCell = (req: RequestRow) => {
+    // Only Raise Capacity has a Prioritization agent so far
+    if (req.Request_Type !== 'Raise Capacity') {
+      return <span className="text-[#9CA3AF]">—</span>;
+    }
+
+    const level = getLevel(req);
+    if (level) {
+      return (
+        <span
+          title={getReasoning(req)}
+          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${getPriorityBadgeClass(level)}`}
+        >
+          {level}
+        </span>
+      );
+    }
+
+    if (failed[req.Request_ID]) {
+      return (
+        <button
+          onClick={() => retryPrioritization(req.Request_ID)}
+          className="text-[11px] font-semibold text-[#EF4444] hover:underline"
+        >
+          Failed, retry
+        </button>
+      );
+    }
+
+    if (req.Current_Status === 'In Progress') {
+      return <span className="text-[11px] text-[#6B7280]">Analyzing...</span>;
+    }
+
+    return <span className="text-[#9CA3AF]">—</span>;
+  };
 
   // Counts by type + by status
   const countForType = (type: string) => {
@@ -140,6 +273,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     return matchesSearch && matchesStatus;
   });
+
+  // Raise Capacity requests first, sorted High -> Medium -> Low (not yet
+  // analyzed last); every other request type keeps its normal order after them.
+  const sortedRequests = [
+    ...filteredRequests
+      .filter((r) => r.Request_Type === 'Raise Capacity')
+      .sort((a, b) => priorityRank(getLevel(a)) - priorityRank(getLevel(b))),
+    ...filteredRequests.filter((r) => r.Request_Type !== 'Raise Capacity'),
+  ];
 
   const getStatusBadgeClass = (status: string | null) => {
     switch (status) {
@@ -293,6 +435,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <th className="py-3.5 px-4">Student</th>
                 <th className="py-3.5 px-4">Request Type</th>
                 <th className="py-3.5 px-4">Submitted</th>
+                <th className="py-3.5 px-4">Priority</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4 text-right">Action</th>
               </tr>
@@ -300,19 +443,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <tbody className="divide-y divide-[#F3F4F6]">
               {loading && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-[#6B7280]">
+                  <td colSpan={7} className="py-8 text-center text-[#6B7280]">
                     Loading requests...
                   </td>
                 </tr>
               )}
-              {!loading && filteredRequests.length === 0 && (
+              {!loading && sortedRequests.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-[#6B7280]">
+                  <td colSpan={7} className="py-8 text-center text-[#6B7280]">
                     No requests found.
                   </td>
                 </tr>
               )}
-              {!loading && filteredRequests.map((req) => (
+              {!loading && sortedRequests.map((req) => (
                 <tr key={req.Request_ID} className="hover:bg-[#F9FAFB]/80 transition-colors">
                   <td className="py-3.5 px-4 font-mono font-bold text-[#059669]">
                     <button
@@ -332,6 +475,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </td>
                   <td className="py-3.5 px-4 font-medium text-[#1F2937]">{req.Request_Type}</td>
                   <td className="py-3.5 px-4 text-[#6B7280]">{req.Request_Date}</td>
+                  <td className="py-3.5 px-4">{renderPriorityCell(req)}</td>
                   <td className="py-3.5 px-4">
                     <span
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${getStatusBadgeClass(

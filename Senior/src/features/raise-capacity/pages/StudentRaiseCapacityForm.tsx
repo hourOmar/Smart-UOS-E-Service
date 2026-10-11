@@ -10,6 +10,7 @@ import { FileUploadDropzone } from '../../../components/common/FileUploadDropzon
 import { supabase } from '../../../services/supabase/client';
 import { createRaiseCapacityRequest, listCourseSections } from '../../../services/supabase/requests';
 import { getStudentByEmail } from '../../../services/supabase/students';
+import { prioritizeRaiseCapacityRequest } from '../../../services/api/agents.service';
 
 interface StudentRaiseCapacityFormProps {
   onToast: (msg: string) => void;
@@ -74,6 +75,14 @@ export const StudentRaiseCapacityForm: React.FC<StudentRaiseCapacityFormProps> =
         term: selectedCourse.Term,
         reason: justification,
         submittedDate,
+      });
+
+      // Fire the Prioritization Agent once, right when the request is
+      // created. Don't block submission on it, and don't let a failure
+      // here (e.g. quota exhaustion) break the student's submission --
+      // the admin dashboard still has a manual "Run analysis" fallback.
+      prioritizeRaiseCapacityRequest(generatedRequestId).catch((err) => {
+        console.error('Background prioritization failed for new request:', err);
       });
 
       const payload: SubmittedRequestData = {

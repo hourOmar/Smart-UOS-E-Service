@@ -49,6 +49,10 @@ export interface AcademicRequest {
   courseName: string;
   department: string;
   priority: PriorityLevel;
+  // NEW: the real, agent-computed priority persisted in Raise_Capacity.Priority_Level
+  // (e.g. "HIGH", "LOW", "MANUAL_REVIEW"). Only meaningful when type === 'Raise Capacity'.
+  priorityLevel?: string | null;
+  priorityResult?: { reasoning?: string } | null;
   submittedDate: string;
   processedDate?: string;
   lastUpdated?: string;
